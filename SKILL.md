@@ -90,6 +90,8 @@ description: "MySQL、达梦、金仓数据库SQL语法转换与适配。支持6
 | 金仓→MySQL | [references/kingbase-to-mysql.md](references/kingbase-to-mysql.md) |
 | 金仓→达梦 | [references/kingbase-to-dm.md](references/kingbase-to-dm.md) |
 
+> 各方向详细映射表见 `references/*-to-*.md`，检测规则见 `references/database-detection.md`，通用语法见 `references/universal-syntax.md`，脚本工具见 `scripts/`。
+
 **语法检测**（只在"只提供了SQL"分支时执行）：
 1. 扫描SQL特征关键词（`AUTO_INCREMENT`、`IDENTITY`、`VARCHAR2`、`GROUP_CONCAT` 等）
 2. 按【数据库语法检测规则】加权评分
@@ -183,12 +185,12 @@ SQL输入
 | 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，建议添加转义符：[列表] |
 
 ### 验证建议
-- [ ] 在目标数据库中执行测试
+- [ ] 在目标数据库中执行测试，对比执行计划
 - [ ] 检查数据类型兼容性
 - [ ] 验证函数返回结果一致性
+- [ ] 评估性能影响（通用转换可能改变执行计划）
+- [ ] 注意版本兼容性（不同数据库版本语法有差异）
 ```
-
-**触发检查点2的情况**：转换完成后，如涉及高风险项，再次提醒用户。
 
 ---
 
@@ -231,23 +233,3 @@ SQL输入
 | 超大SQL | SQL超过1000行或10万字符 | 1. 建议分段转换（按语句拆分）<br>2. 或提取核心片段（CREATE TABLE + 关键查询）<br>3. 标注⚠️"完整转换建议分批进行" |
 | 复杂嵌套 | 多层子查询（>3层）或CTE嵌套 | 1. 建议逐层转换（从最内层开始）<br>2. 或拆分为多个独立查询分别转换<br>3. 标注⚠️"嵌套层级较深，建议人工复核" |
 
----
-
-## 资源索引
-
-| 路径 | 用途 |
-|------|------|
-| `references/mysql-to-*.md` / `dm-to-*.md` / `kingbase-to-*.md` | 6种转换方向的详细函数/类型映射表 |
-| `references/database-detection.md` | 数据库语法检测指南与手动检测清单 |
-| `references/universal-syntax.md` | 通用SQL语法参考与最佳实践 |
-| `scripts/detect_database.py` | 自动数据库类型检测 |
-| `scripts/sql_converter.py` | SQL语法批量转换工具 |
-
----
-
-## 注意事项
-
-1. **测试验证**：转换后的SQL必须在目标数据库中测试验证
-2. **性能考虑**：通用转换可能影响性能，需评估执行计划
-3. **版本差异**：不同数据库版本语法有差异，注意兼容性
-4. **调试建议**：在目标数据库中逐步执行，对比执行计划
