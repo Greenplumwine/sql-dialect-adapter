@@ -13,5 +13,20 @@
     "id": 3,
     "prompt": "优化这段 SQL：\n```sql\nSELECT * FROM orders WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY);\n```",
     "expected": "skill 应识别用户意图模糊（没有转换方向），主动询问目标数据库类型或确认是否需要方言转换"
+  },
+  {
+    "id": 4,
+    "prompt": "帮我把这个 MySQL 建表语句转成达梦的：\n```sql\nCREATE TABLE `order` (\n  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,\n  `user_id` MEDIUMINT NOT NULL,\n  `amount` DECIMAL(19,4) DEFAULT 0.00,\n  `status` TINYINT DEFAULT 1,\n  `remark` TEXT,\n  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,\n  INDEX idx_user (`user_id`),\n  INDEX idx_status (`status`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n```",
+    "expected": "完整DDL转换：AUTO_INCREMENT→IDENTITY, MEDIUMINT→INT, TINYINT→SMALLINT, TEXT→CLOB/VARCHAR2, DATETIME→DATE/TIMESTAMP, DECIMAL→NUMERIC, 反引号→双引号, 引擎/字符集声明移除, 保留字order加引号"
+  },
+  {
+    "id": 5,
+    "prompt": "这段达梦的SQL帮我转成金仓的：\n```sql\nSELECT d.dept_name,\n       LISTAGG(e.emp_name, ', ') WITHIN GROUP (ORDER BY e.salary DESC) AS top_employees,\n       COUNT(*) OVER (PARTITION BY d.dept_id) AS emp_count\nFROM department d\nLEFT JOIN employee e ON d.dept_id = e.dept_id\nWHERE e.hire_date > SYSDATE - 365\nGROUP BY d.dept_id, d.dept_name\nOFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY;\n```",
+    "expected": "达梦→金仓转换：LISTAGG→STRING_AGG, SYSDATE→CURRENT_TIMESTAMP, 双引号保留, OFFSET/FETCH→LIMIT/OFFSET, 日期运算 INTERVAL 语法适配"
+  },
+  {
+    "id": 6,
+    "prompt": "帮我把这段 MySQL 的复杂查询转成达梦的，注意有个 group 字段可能是保留字：\n```sql\nSELECT \n  o.group,\n  GROUP_CONCAT(DISTINCT u.name ORDER BY u.score DESC SEPARATOR ' | ') AS ranked_users,\n  SUM(o.amount) AS total,\n  IFNULL(AVG(o.amount), 0) AS avg_amount\nFROM `order` o\nJOIN users u ON o.user_id = u.id\nWHERE o.created_at BETWEEN DATE_SUB(NOW(), INTERVAL 1 MONTH) AND NOW()\nGROUP BY o.group\nHAVING total > 10000\nLIMIT 50;\n```",
+    "expected": "触发检查点2（高风险）：group保留字冲突、GROUP_CONCAT(DISTINCT+ORDER BY)行为差异、反引号→双引号、IFNULL→NVL、DATE_SUB/NOW→标准日期语法、LIMIT→FETCH FIRST"
   }
 ]
