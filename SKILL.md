@@ -74,13 +74,21 @@ description: "MySQL、达梦、金仓数据库SQL语法转换与适配。支持6
 
 ## 核心转换引擎
 
-### Step 1：解析输入
+### Step 1：解析输入与方向确认
 
 **输入**：用户SQL + （可选）源数据库 + （可选）目标数据库
 
-**处理**：
-1. 若源/目标未明确 → 触发检查点1
-2. 若已明确 → 加载对应方向的参考文档
+**按以下分支处理**：
+
+```
+用户输入
+  ├─ 源/目标均明确
+  │   └─ → 直接进入 Step 2（加载对应方向参考文档）
+  ├─ 只提供了SQL，未说明数据库类型
+  │   └─ → 执行【语法检测】→ 检查点1确认 → 进入 Step 2
+  └─ 只说"优化SQL"或"标准化SQL"（意图模糊）
+      └─ → 检查点1引导 → 等待用户回复 → 明确后进入 Step 2
+```
 
 **方向→文档映射**：
 
@@ -93,23 +101,19 @@ description: "MySQL、达梦、金仓数据库SQL语法转换与适配。支持6
 | 金仓→MySQL | [references/kingbase-to-mysql.md](references/kingbase-to-mysql.md) |
 | 金仓→达梦 | [references/kingbase-to-dm.md](references/kingbase-to-dm.md) |
 
-### Step 2：语法检测（条件执行）
-
-**触发条件**：用户未提供源数据库类型
-
-**操作**：
-1. 使用 `scripts/detect_database.py` 分析SQL特征
-2. 或按 [references/database-detection.md](references/database-detection.md) 手动检测
-3. 将检测结果告知用户，等待确认
+**语法检测**（只在"只提供了SQL"分支时执行）：
+1. 扫描SQL特征关键词（`AUTO_INCREMENT`、`IDENTITY`、`VARCHAR2`、`GROUP_CONCAT` 等）
+2. 按【数据库语法检测规则】加权评分
+3. 将检测结果带入检查点1，等待用户确认
 
 **检测逻辑**：
 - 扫描SQL中的特征关键词（`AUTO_INCREMENT`、`IDENTITY`、`VARCHAR2`、`GROUP_CONCAT`、`LISTAGG`、`STRING_AGG`、`SYSDATE`、`::` 等）
 - 加权评分，确定最可能的数据库类型
 - 权重>1：直接报告；权重≤1：列出候选，请用户选择
 
-### Step 3：模式匹配转换
+### Step 2：执行转换
 
-**输入**：源SQL + 确认的转换方向
+**输入**：经过 Step 1 确认后的源SQL + 转换方向
 
 **按以下5种转换模式顺序执行**：
 
@@ -157,7 +161,7 @@ SQL输入
 - 达梦：自动开启（无需显式声明）
 - 金仓：`BEGIN`
 
-### Step 4：输出与验证
+### Step 3：输出与验证
 
 **输出格式**：
 
