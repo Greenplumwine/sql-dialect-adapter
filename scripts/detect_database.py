@@ -33,6 +33,8 @@ def detect_database(sql):
         (r'\bIFNULL\s*\(', 'IFNULL()'),
         (r'\bLOCATE\s*\(', 'LOCATE()'),
         (r"DATE_FORMAT\s*\(.*'%[YymdHis]'", 'DATE_FORMAT()'),
+        (r'\bUNIX_TIMESTAMP\s*\(', 'UNIX_TIMESTAMP()'),
+        (r'\bFIND_IN_SET\s*\(', 'FIND_IN_SET()'),
         (r'\bENUM\s*\(', 'ENUM类型'),
         (r'\bMEDIUMINT\b', 'MEDIUMINT类型'),
         (r'\bYEAR\b', 'YEAR类型'),

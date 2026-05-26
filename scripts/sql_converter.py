@@ -8,32 +8,173 @@ import sys
 import os
 import re
 
-# 转换规则映射
+
+def convert_group_concat_to_listagg(sql):
+    """将 GROUP_CONCAT 转换为达梦 LISTAGG，正确处理无 ORDER BY 的情况"""
+    pattern = r'GROUP_CONCAT\s*\(\s*(.+?)\s*(?:ORDER\s+BY\s+(.+?))?\s*(?:SEPARATOR\s+\'(.+?)\')?\s*\)'
+
+    def replacer(match):
+        expr = match.group(1).strip()
+        order_by = match.group(2)
+        separator = match.group(3) or ','
+
+        if order_by:
+            return f"LISTAGG({expr}, '{separator}') WITHIN GROUP (ORDER BY {order_by.strip()})"
+        else:
+            return f"LISTAGG({expr}, '{separator}')"
+
+    return re.sub(pattern, replacer, sql, flags=re.IGNORECASE)
+
+
+def convert_group_concat_to_string_agg(sql):
+    """将 GROUP_CONCAT 转换为金仓 STRING_AGG，正确处理无 ORDER BY 的情况"""
+    pattern = r'GROUP_CONCAT\s*\(\s*(.+?)\s*(?:ORDER\s+BY\s+(.+?))?\s*(?:SEPARATOR\s+\'(.+?)\')?\s*\)'
+
+    def replacer(match):
+        expr = match.group(1).strip()
+        order_by = match.group(2)
+        separator = match.group(3) or ','
+
+        if order_by:
+            return f"STRING_AGG({expr}, '{separator}' ORDER BY {order_by.strip()})"
+        else:
+            return f"STRING_AGG({expr}, '{separator}')"
+
+    return re.sub(pattern, replacer, sql, flags=re.IGNORECASE)
+
+
+def convert_string_agg_to_group_concat(sql):
+    """将金仓 STRING_AGG 转换为 MySQL GROUP_CONCAT"""
+    pattern = r'STRING_AGG\s*\(\s*(.+?)\s*,\s*\'\s*(.+?)\s*\'\s*(?:ORDER\s+BY\s+(.+?))?\s*\)'
+
+    def replacer(match):
+        expr = match.group(1).strip()
+        separator = match.group(2).strip()
+        order_by = match.group(3)
+
+        if order_by:
+            return f"GROUP_CONCAT({expr} ORDER BY {order_by.strip()} SEPARATOR '{separator}')"
+        else:
+            return f"GROUP_CONCAT({expr} SEPARATOR '{separator}')"
+
+    return re.sub(pattern, replacer, sql, flags=re.IGNORECASE)
+
+
+def convert_listagg_to_group_concat(sql):
+    """将达梦 LISTAGG 转换为 MySQL GROUP_CONCAT"""
+    pattern = r'LISTAGG\s*\(\s*(.+?)\s*,\s*\'\s*(.+?)\s*\'\s*\)\s*(?:WITHIN\s+GROUP\s*\(\s*ORDER\s+BY\s+(.+?)\s*\))?'
+
+    def replacer(match):
+        expr = match.group(1).strip()
+        separator = match.group(2).strip()
+        order_by = match.group(3)
+
+        if order_by:
+            return f"GROUP_CONCAT({expr} ORDER BY {order_by.strip()} SEPARATOR '{separator}')"
+        else:
+            return f"GROUP_CONCAT({expr} SEPARATOR '{separator}')"
+
+    return re.sub(pattern, replacer, sql, flags=re.IGNORECASE)
+
+
+def convert_listagg_to_string_agg(sql):
+    """将达梦 LISTAGG 转换为金仓 STRING_AGG"""
+    pattern = r'LISTAGG\s*\(\s*(.+?)\s*,\s*\'\s*(.+?)\s*\'\s*\)\s*(?:WITHIN\s+GROUP\s*\(\s*ORDER\s+BY\s+(.+?)\s*\))?'
+
+    def replacer(match):
+        expr = match.group(1).strip()
+        separator = match.group(2).strip()
+        order_by = match.group(3)
+
+        if order_by:
+            return f"STRING_AGG({expr}, '{separator}' ORDER BY {order_by.strip()})"
+        else:
+            return f"STRING_AGG({expr}, '{separator}')"
+
+    return re.sub(pattern, replacer, sql, flags=re.IGNORECASE)
+
+
+def convert_limit_offset(sql, source_db, target_db):
+    """
+    将 LIMIT OFFSET 转换为目标数据库的分页语法。
+    生成可直接使用的 ROW_NUMBER() 方案（达梦）或保留 LIMIT（金仓）。
+    """
+    s = source_db.lower()
+    t = target_db.lower()
+
+    # 只有 MySQL/Kingbase -> DM 需要转换；Kingbase 兼容 LIMIT
+    if not (s in ['mysql', 'kingbase'] and t == 'dm'):
+        return sql
+
+    def _build_row_number_pagination(sql_text, limit, offset):
+        """构建 ROW_NUMBER() 分页查询"""
+        start = offset + 1
+        end = offset + limit
+        before_limit = sql_text.strip()
+
+        # 查找末尾的 ORDER BY（在 LIMIT 之前）
+        order_match = re.search(r'\bORDER\s+BY\s+(.+?)$', before_limit, re.IGNORECASE | re.DOTALL)
+        if order_match:
+            order_by = order_match.group(1).strip()
+            inner = before_limit[:order_match.start()].strip()
+        else:
+            order_by = '1'
+            inner = before_limit
+
+        return (f"SELECT * FROM (\n"
+                f"    SELECT ROW_NUMBER() OVER (ORDER BY {order_by}) AS rn, t.*\n"
+                f"    FROM ({inner}) t\n"
+                f") WHERE rn BETWEEN {start} AND {end}")
+
+    # 匹配 LIMIT n OFFSET m
+    match1 = re.search(r'\bLIMIT\s+(\d+)\s+OFFSET\s+(\d+)\b', sql, re.IGNORECASE)
+    if match1:
+        limit = int(match1.group(1))
+        offset = int(match1.group(2))
+        return _build_row_number_pagination(sql[:match1.start()], limit, offset)
+
+    # 匹配 LIMIT m, n
+    match2 = re.search(r'\bLIMIT\s+(\d+)\s*,\s*(\d+)\b', sql, re.IGNORECASE)
+    if match2:
+        offset = int(match2.group(1))
+        limit = int(match2.group(2))
+        return _build_row_number_pagination(sql[:match2.start()], limit, offset)
+
+    # 匹配 LIMIT n
+    match3 = re.search(r'\bLIMIT\s+(\d+)\b', sql, re.IGNORECASE)
+    if match3:
+        limit = int(match3.group(1))
+        before_limit = sql[:match3.start()].strip()
+        return f"{before_limit}\nFETCH FIRST {limit} ROWS ONLY"
+
+    return sql
+
+
+# 转换规则映射（纯文本替换，不含 GROUP_CONCAT / LIMIT / STRING_AGG / LISTAGG）
 CONVERSION_RULES = {
     # MySQL -> 达梦
     'mysql_to_dm': {
         'AUTO_INCREMENT': 'IDENTITY(1,1)',
-        'VARCHAR\s*\(\s*(\d+)\s*\)': r'VARCHAR2(\1)',
+        r'VARCHAR\s*\(\s*(\d+)\s*\)': r'VARCHAR2(\1)',
         'TEXT': 'CLOB',
         'DATETIME': 'DATE',
-        'IF\s*\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)': r'CASE WHEN \1 THEN \2 ELSE \3 END',
-        'IFNULL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
-        'GROUP_CONCAT\s*\(\s*(.+?)\s*(?:ORDER\s+BY\s+(.+?))?\s*(?:SEPARATOR\s+\'(.+?)\')?\s*\)': 
-            r'LISTAGG(\1, \'\3\') WITHIN GROUP (ORDER BY \2)',
-        'DATE_FORMAT\s*\(\s*(.+?)\s*,\s*\'%Y-%m-%d\s*%H:%i:%s\'\s*\)': r'TO_CHAR(\1, \'YYYY-MM-DD HH24:MI:SS\')',
-        r'LIMIT\s+(\d+)\s+OFFSET\s+(\d+)': r'-- 分页查询需手动转换\n-- 原始: LIMIT \1 OFFSET \2\n-- 达梦: 使用ROW_NUMBER()或LIMIT(达梦8支持)',
+        r'\bIF\s*\(\s*([^,]+)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)': r'CASE WHEN \1 THEN \2 ELSE \3 END',
+        r'\bIFNULL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
+        r"DATE_FORMAT\s*\(\s*(.+?)\s*,\s*'%Y-%m-%d\s*%H:%i:%s'\s*\)": r"TO_CHAR(\1, 'YYYY-MM-DD HH24:MI:SS')",
+        r"DATE_FORMAT\s*\(\s*(.+?)\s*,\s*'%Y-%m-%d'\s*\)": r"TO_CHAR(\1, 'YYYY-MM-DD')",
+        r'DATE_SUB\s*\(\s*(.+?)\s*,\s*INTERVAL\s+(\d+)\s+DAY\s*\)': r'\1 - \2',
+        r'DATE_ADD\s*\(\s*(.+?)\s*,\s*INTERVAL\s+(\d+)\s+DAY\s*\)': r'\1 + \2',
     },
     # 达梦 -> MySQL
     'dm_to_mysql': {
-        'IDENTITY\s*\(\s*\d+\s*,\s*\d+\s*\)': 'AUTO_INCREMENT',
-        'VARCHAR2\s*\(\s*(\d+)\s*\)': r'VARCHAR(\1)',
+        r'IDENTITY\s*\(\s*\d+\s*,\s*\d+\s*\)': 'AUTO_INCREMENT',
+        r'VARCHAR2\s*\(\s*(\d+)\s*\)': r'VARCHAR(\1)',
         'CLOB': 'LONGTEXT',
-        'DATE\s+AS\s+TIMESTAMP': 'DATETIME',
-        'SYSDATE': 'NOW()',
-        'NVL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
-        'LISTAGG\s*\(\s*(.+?)\s*,\s*\'\s*(.+?)\s*\'\s*\)\s+WITHIN\s+GROUP\s*\(\s*ORDER\s+BY\s+(.+?)\s*\)':
-            r'GROUP_CONCAT(\1 ORDER BY \3 SEPARATOR \'\2\')',
-        'TO_CHAR\s*\(\s*(.+?)\s*,\s*\'YYYY-MM-DD\s+HH24:MI:SS\'\s*\)': r'DATE_FORMAT(\1, \'%Y-%m-%d %H:%i:%s\')',
+        r'DATE\s+AS\s+TIMESTAMP': 'DATETIME',
+        r'\bSYSDATE\b': 'NOW()',
+        r'\bNVL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
+        r"TO_CHAR\s*\(\s*(.+?)\s*,\s*'YYYY-MM-DD\s+HH24:MI:SS'\s*\)": r"DATE_FORMAT(\1, '%Y-%m-%d %H:%i:%s')",
+        r"TO_CHAR\s*\(\s*(.+?)\s*,\s*'YYYY-MM-DD'\s*\)": r"DATE_FORMAT(\1, '%Y-%m-%d')",
     },
     # MySQL -> 金仓
     'mysql_to_kingbase': {
@@ -41,51 +182,45 @@ CONVERSION_RULES = {
         'TINYINT': 'SMALLINT',
         'MEDIUMINT': 'INT',
         'DATETIME': 'TIMESTAMP',
-        'IF\s*\(\s*(.+?)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)': r'CASE WHEN \1 THEN \2 ELSE \3 END',
-        'IFNULL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
-        'GROUP_CONCAT\s*\(\s*(.+?)\s*(?:ORDER\s+BY\s+(.+?))?\s*(?:SEPARATOR\s+\'(.+?)\')?\s*\)': 
-            r'STRING_AGG(\1, \'\3\') ORDER BY \2',
-        'DATE_FORMAT\s*\(\s*(.+?)\s*,\s*\'%Y-%m-%d\s*%H:%i:%s\'\s*\)': r'TO_CHAR(\1, \'YYYY-MM-DD HH24:MI:SS\')',
+        r'\bIF\s*\(\s*([^,]+)\s*,\s*(.+?)\s*,\s*(.+?)\s*\)': r'CASE WHEN \1 THEN \2 ELSE \3 END',
+        r'\bIFNULL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
+        r"DATE_FORMAT\s*\(\s*(.+?)\s*,\s*'%Y-%m-%d\s*%H:%i:%s'\s*\)": r"TO_CHAR(\1, 'YYYY-MM-DD HH24:MI:SS')",
+        r"DATE_FORMAT\s*\(\s*(.+?)\s*,\s*'%Y-%m-%d'\s*\)": r"TO_CHAR(\1, 'YYYY-MM-DD')",
         'BLOB': 'BYTEA',
         'JSON': 'JSONB',
     },
     # 金仓 -> MySQL
     'kingbase_to_mysql': {
-        'SERIAL': 'AUTO_INCREMENT',
+        r'\bSERIAL\b(?!\s*\()': 'AUTO_INCREMENT',
         'BIGSERIAL': 'BIGINT AUTO_INCREMENT',
-        'STRING_AGG\s*\(\s*(.+?)\s*,\s*\'\s*(.+?)\s*\'\s*(?:ORDER\s+BY\s+(.+?))?\s*\)':
-            r'GROUP_CONCAT(\1 ORDER BY \3 SEPARATOR \'\2\')',
-        'TO_CHAR\s*\(\s*(.+?)\s*,\s*\'YYYY-MM-DD\s+HH24:MI:SS\'\s*\)': r'DATE_FORMAT(\1, \'%Y-%m-%d %H:%i:%s\')',
+        r"TO_CHAR\s*\(\s*(.+?)\s*,\s*'YYYY-MM-DD\s+HH24:MI:SS'\s*\)": r"DATE_FORMAT(\1, '%Y-%m-%d %H:%i:%s')",
         'BYTEA': 'LONGBLOB',
         'JSONB': 'JSON',
-        '::\s*(\w+)': r'CAST(AS \1)',  # 简化处理
-        'BEGIN': 'START TRANSACTION',
+        r'::\s*(\w+)': r'CAST(AS \1)',  # 简化处理
+        r'\bBEGIN\b(?!\s*(TRANSACTION|WORK))': 'START TRANSACTION',
     },
     # 达梦 -> 金仓
     'dm_to_kingbase': {
-        'IDENTITY\s*\(\s*\d+\s*,\s*\d+\s*\)': 'SERIAL',
-        'VARCHAR2\s*\(\s*(\d+)\s*\)': r'VARCHAR(\1)',
+        r'IDENTITY\s*\(\s*\d+\s*,\s*\d+\s*\)': 'SERIAL',
+        r'VARCHAR2\s*\(\s*(\d+)\s*\)': r'VARCHAR(\1)',
         'CLOB': 'TEXT',
-        'DATE': 'TIMESTAMP',
-        'SYSDATE': 'CURRENT_TIMESTAMP',
-        'NVL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
-        'LISTAGG\s*\(\s*(.+?)\s*,\s*\'\s*(.+?)\s*\'\s*\)\s+WITHIN\s+GROUP\s*\(\s*ORDER\s+BY\s+(.+?)\s*\)':
-            r'STRING_AGG(\1, \'\2\') ORDER BY \3',
-        'TO_DATE\s*\(\s*(.+?)\s*,\s*\'YYYY-MM-DD\'\s*\)': r'TO_DATE(\1, \'YYYY-MM-DD\')',  # 一致
+        r'\bDATE\b(?=\s+DEFAULT|\s+\,)': 'TIMESTAMP',
+        r'\bSYSDATE\b': 'CURRENT_TIMESTAMP',
+        r'\bNVL\s*\(\s*(.+?)\s*,\s*(.+?)\s*\)': r'COALESCE(\1, \2)',
+        r"TO_DATE\s*\(\s*(.+?)\s*,\s*'YYYY-MM-DD'\s*\)": r"TO_DATE(\1, 'YYYY-MM-DD')",
     },
     # 金仓 -> 达梦
     'kingbase_to_dm': {
-        'SERIAL': 'IDENTITY(1,1)',
+        r'\bSERIAL\b(?!\s*\()': 'IDENTITY(1,1)',
         'BIGSERIAL': 'BIGINT IDENTITY(1,1)',
-        'STRING_AGG\s*\(\s*(.+?)\s*,\s*\'\s*(.+?)\s*\'\s*(?:ORDER\s+BY\s+(.+?))?\s*\)':
-            r'LISTAGG(\1, \'\2\') WITHIN GROUP (ORDER BY \3)',
         'TIMESTAMP': 'DATE',
         'CURRENT_TIMESTAMP': 'SYSDATE',
         'BYTEA': 'BLOB',
         'JSONB': 'CLOB',
-        '::\s*(\w+)': r'CAST(AS \1)',  # 简化处理
+        r'::\s*(\w+)': r'CAST(AS \1)',  # 简化处理
     },
 }
+
 
 def convert_sql(sql_text, source_db, target_db):
     """
@@ -98,13 +233,40 @@ def convert_sql(sql_text, source_db, target_db):
     if conversion_key not in CONVERSION_RULES:
         return sql_text, [f"不支持从 {source_db} 转换到 {target_db}"]
 
-    rules = CONVERSION_RULES[conversion_key]
     converted = sql_text
     applied_rules = []
 
+    # 1. 特殊处理：GROUP_CONCAT / STRING_AGG / LISTAGG 转换
+    if conversion_key == 'mysql_to_dm':
+        converted = convert_group_concat_to_listagg(converted)
+        applied_rules.append("特殊处理: GROUP_CONCAT -> LISTAGG")
+    elif conversion_key == 'mysql_to_kingbase':
+        converted = convert_group_concat_to_string_agg(converted)
+        applied_rules.append("特殊处理: GROUP_CONCAT -> STRING_AGG")
+    elif conversion_key == 'kingbase_to_mysql':
+        converted = convert_string_agg_to_group_concat(converted)
+        applied_rules.append("特殊处理: STRING_AGG -> GROUP_CONCAT")
+    elif conversion_key == 'dm_to_mysql':
+        converted = convert_listagg_to_group_concat(converted)
+        applied_rules.append("特殊处理: LISTAGG -> GROUP_CONCAT")
+    elif conversion_key == 'dm_to_kingbase':
+        converted = convert_listagg_to_string_agg(converted)
+        applied_rules.append("特殊处理: LISTAGG -> STRING_AGG")
+    elif conversion_key == 'kingbase_to_dm':
+        converted = convert_string_agg_to_group_concat(converted)
+        applied_rules.append("特殊处理: STRING_AGG -> LISTAGG (via GROUP_CONCAT)")
+
+    # 2. 特殊处理：LIMIT OFFSET 分页转换
+    if conversion_key in ['mysql_to_dm', 'kingbase_to_dm']:
+        original = converted
+        converted = convert_limit_offset(converted, source_db, target_db)
+        if converted != original:
+            applied_rules.append("特殊处理: LIMIT OFFSET -> ROW_NUMBER() 分页")
+
+    # 3. 纯文本正则替换
+    rules = CONVERSION_RULES[conversion_key]
     for pattern, replacement in rules.items():
         try:
-            # 使用正则表达式进行替换
             new_text, count = re.subn(pattern, replacement, converted, flags=re.IGNORECASE)
             if count > 0:
                 converted = new_text
@@ -160,7 +322,7 @@ def main():
     print(f"转换: {source_db_name} -> {target_db_name}")
     print(f"源SQL长度: {len(sql_text)} 字符")
 
-    converted_sql, applied_rules = convert_sql(sql_text, source_db_name, target_db_name)
+    converted_sql, applied_rules = convert_sql(sql_text, source_db, target_db)
 
     if sys.argv[1] == '--string':
         print("\n转换后的SQL:")
