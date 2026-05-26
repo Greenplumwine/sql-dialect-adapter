@@ -191,6 +191,16 @@ SQL输入
 5. 分页：用 `ROW_NUMBER() OVER` 窗口函数
 6. 标识符：小写+下划线，不使用引号包裹
 
+**特殊函数的标准化替代**：
+
+| 原函数 | 通用替代方案 | 说明 |
+|--------|-------------|------|
+| `UNIX_TIMESTAMP(d)` | `EXTRACT(EPOCH FROM d)` | SQL:2016 标准，金仓原生支持；达梦需自定义函数 |
+| `FIND_IN_SET(str, strlist)` | `POSITION(',' \|\| str \|\| ',' IN ',' \|\| strlist \|\| ',')` | 通用字符串匹配逻辑，所有数据库支持 |
+| `GROUP_CONCAT(expr SEPARATOR sep)` | 无通用替代 | 建议用目标数据库的 `LISTAGG`/`STRING_AGG`，或在应用层聚合 |
+| `DATE_FORMAT(d, '%Y-%m-%d')` | `TO_CHAR(d, 'YYYY-MM-DD')` | 非标准但广泛支持（达梦、金仓、Oracle 兼容） |
+| `IF(cond, v1, v2)` | `CASE WHEN cond THEN v1 ELSE v2 END` | ANSI 标准语法 |
+
 ---
 
 ## 故障排除与Fallback
