@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "prompt": "帮我把这段 MySQL SQL 转成达梦的：\n```sql\nSELECT IFNULL(name, '未知') as username,\n       DATE_FORMAT(created_at, '%Y-%m-%d') as date,\n       GROUP_CONCAT(tag SEPARATOR ', ') as tags\nFROM users\nWHERE status = 1\nLIMIT 10 OFFSET 20;\n```",
+    "expected": "正确转换为达梦语法：IFNULL→NVLF/COALESCE, DATE_FORMAT→TO_CHAR, GROUP_CONCAT→WM_CONCAT/LISTAGG, LIMIT→ROWNUM/FETCH FIRST"
+  },
+  {
+    "id": 2,
+    "prompt": "这段 SQL 不知道是哪家的语法，能帮我识别一下并转成标准 SQL 吗？\n```sql\nSELECT GROUP_CONCAT(name SEPARATOR ', '),\n       UNIX_TIMESTAMP(created_at),\n       FIND_IN_SET('a', tags)\nFROM products;\n```",
+    "expected": "先识别为 MySQL 语法，再转为通用/标准 SQL：GROUP_CONCAT→STRING_AGG或手动拼接，UNIX_TIMESTAMP→EXTRACT(EPOCH FROM...)，FIND_IN_SET→POSITION/正则匹配"
+  },
+  {
+    "id": 3,
+    "prompt": "优化这段 SQL：\n```sql\nSELECT * FROM orders WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY);\n```",
+    "expected": "skill 应识别用户意图模糊（没有转换方向），主动询问目标数据库类型或确认是否需要方言转换"
+  }
+]
