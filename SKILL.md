@@ -59,17 +59,6 @@ description: "MySQL、达梦、金仓数据库SQL语法转换与适配。支持6
 > 2. **SQL 优化**：优化查询性能和写法
 > 3. **标准化**：转为通用 ANSI SQL
 
-### 检查点2：高风险确认
-
-以下情况需暂停并提示用户：
-
-| 风险类型 | 示例 | 提示语 |
-|----------|------|--------|
-| 数据类型精度变化 | `DECIMAL(19,4)` → `NUMERIC` | ⚠️ 数据类型可能丢失精度，请确认是否继续 |
-| 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句（若原 SQL 无 ORDER BY，则无需提醒）<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串），建议加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>建议转换后测试验证 |
-| 分页性能差异 | `LIMIT OFFSET` → `ROWNUM` | ⚠️ 分页语法在目标数据库中的执行计划可能不同，建议关注性能 |
-| 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，建议添加转义符：[列表] |
-
 ---
 
 ## 核心转换引擎
@@ -181,6 +170,17 @@ SQL输入
 | 序号 | 原语法 | 转换后 | 说明 |
 |------|--------|--------|------|
 | 1 | ... | ... | ... |
+
+### 检查点2：高风险确认（输出前执行）
+
+转换完成后，如涉及以下高风险项，必须在输出中再次提醒用户：
+
+| 风险类型 | 示例 | 提示语 |
+|----------|------|--------|
+| 数据类型精度变化 | `DECIMAL(19,4)` → `NUMERIC` | ⚠️ 数据类型可能丢失精度，请确认是否继续 |
+| 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句（若原 SQL 无 ORDER BY，则无需提醒）<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串），建议加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>建议转换后测试验证 |
+| 分页性能差异 | `LIMIT OFFSET` → `ROWNUM` | ⚠️ 分页语法在目标数据库中的执行计划可能不同，建议关注性能 |
+| 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，建议添加转义符：[列表] |
 
 ### 验证建议
 - [ ] 在目标数据库中执行测试
