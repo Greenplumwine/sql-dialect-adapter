@@ -135,17 +135,20 @@ SQL输入
 - MySQL特有：`TINYINT`→`SMALLINT`、`MEDIUMINT`→`INT`、`TEXT`→`VARCHAR(4000)`
 - 达梦特有：`VARCHAR2`→目标对应、`CLOB`→`VARCHAR(4000)`
 - 金仓特有：`SERIAL`→目标对应、`JSONB`→目标对应
+- **其他方向注意**：达梦→金仓时 `VARCHAR2` 转 `VARCHAR`（金仓无 VARCHAR2）；金仓→达梦时 `SERIAL` 转 `IDENTITY(1,1)`
 
 **模式B — 函数方言替换**：
 - 条件函数：`IF()`→`CASE WHEN`、`IFNULL`→`COALESCE`
 - 字符串聚合：`GROUP_CONCAT`→`LISTAGG`/`STRING_AGG`/`WM_CONCAT`
 - 日期函数：`DATE_FORMAT`→`TO_CHAR`、`NOW()`→`CURRENT_TIMESTAMP`/`SYSDATE`
 - 字符串操作：`CONCAT`→`||`、`LOCATE`→`POSITION`/`INSTR`
+- **其他方向注意**：达梦 `LISTAGG(e, sep) WITHIN GROUP (ORDER BY ...)` → 金仓 `STRING_AGG(e, sep ORDER BY ...)`（ORDER BY 从 `WITHIN GROUP` 内移到函数参数后）
 
 **模式C — 语法结构重组**：
 - DDL：`AUTO_INCREMENT`→`IDENTITY`/`SERIAL`、引擎/字符集声明移除
 - DML：批量插入语法、多表UPDATE/DELETE语法
 - 标识符：反引号→双引号、保留字检查
+- **其他方向注意**：金仓 `expr::type` → 达梦/MySQL `CAST(expr AS type)`；达梦→MySQL 时双引号 `"` 需转回反引号 `` ` ``
 
 **模式D — 分页查询适配**：
 - MySQL：`LIMIT n OFFSET m`
@@ -155,6 +158,7 @@ SQL输入
   - 达梦8 也兼容 `LIMIT n OFFSET m`，但优先使用 `FETCH FIRST`
 - 金仓：`LIMIT n OFFSET m`（兼容MySQL）
 - 通用方案：`ROW_NUMBER() OVER` 窗口函数（所有版本/数据库通用）
+- **其他方向注意**：达梦→金仓分页可直接保留 `LIMIT`（金仓兼容）；金仓→达梦8+ 建议用 `FETCH FIRST`，达梦7- 需用 `ROW_NUMBER()`
 
 **模式E — 事务控制调整**：
 - MySQL：`START TRANSACTION`
