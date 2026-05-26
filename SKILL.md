@@ -64,7 +64,7 @@ description: "MySQL、达梦、金仓数据库SQL语法转换与适配。支持6
 | 风险类型 | 示例 | 提示语 |
 |----------|------|--------|
 | 数据类型精度变化 | `DECIMAL(19,4)` → `NUMERIC` | ⚠️ 数据类型可能丢失精度，请确认是否继续 |
-| 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串），建议加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>建议转换后测试验证 |
+| 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句（若原 SQL 无 ORDER BY，则无需提醒）<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串），建议加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>建议转换后测试验证 |
 | 分页性能差异 | `LIMIT OFFSET` → `ROWNUM` | ⚠️ 分页语法在目标数据库中的执行计划可能不同，建议关注性能 |
 | 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，建议添加转义符：[列表] |
 
@@ -143,9 +143,12 @@ SQL输入
 
 **模式D — 分页查询适配**：
 - MySQL：`LIMIT n OFFSET m`
-- 达梦：`ROW_NUMBER() OVER` 或 `FETCH FIRST`（达梦8）
+- 达梦：
+  - 达梦8+：推荐 `FETCH FIRST n ROWS ONLY` / `OFFSET m ROWS FETCH NEXT n ROWS ONLY`（标准SQL兼容）
+  - 达梦7及以下：`ROW_NUMBER() OVER` 窗口函数
+  - 达梦8 也兼容 `LIMIT n OFFSET m`，但优先使用 `FETCH FIRST`
 - 金仓：`LIMIT n OFFSET m`（兼容MySQL）
-- 通用方案：`ROW_NUMBER() OVER` 窗口函数
+- 通用方案：`ROW_NUMBER() OVER` 窗口函数（所有版本/数据库通用）
 
 **模式E — 事务控制调整**：
 - MySQL：`START TRANSACTION`
@@ -197,9 +200,12 @@ SQL输入
 |--------|-------------|------|
 | `UNIX_TIMESTAMP(d)` | `EXTRACT(EPOCH FROM d)` | SQL:2016 标准，金仓原生支持；达梦需自定义函数 |
 | `FIND_IN_SET(str, strlist)` | `POSITION(',' \|\| str \|\| ',' IN ',' \|\| strlist \|\| ',')` | 通用字符串匹配逻辑，所有数据库支持 |
-| `GROUP_CONCAT(expr SEPARATOR sep)` | 无通用替代 | 建议用目标数据库的 `LISTAGG`/`STRING_AGG`，或在应用层聚合 |
+| `GROUP_CONCAT(expr SEPARATOR sep)` | 无严格通用替代 | SQL:2016 引入 `LISTAGG`（Oracle/达梦）和 `STRING_AGG`（PostgreSQL/金仓），但两者互不兼容。建议：<br>- 若有明确目标数据库，使用该数据库的聚合函数<br>- 若无目标数据库，在应用层聚合 |
 | `DATE_FORMAT(d, '%Y-%m-%d')` | `TO_CHAR(d, 'YYYY-MM-DD')` | 非标准但广泛支持（达梦、金仓、Oracle 兼容） |
 | `IF(cond, v1, v2)` | `CASE WHEN cond THEN v1 ELSE v2 END` | ANSI 标准语法 |
+| `DATE_SUB(d, INTERVAL n DAY)` | `d - INTERVAL 'n' DAY` | SQL 标准 INTERVAL 语法，达梦/金仓/MySQL 均支持 |
+| `DATE_ADD(d, INTERVAL n DAY)` | `d + INTERVAL 'n' DAY` | SQL 标准 INTERVAL 语法，达梦/金仓/MySQL 均支持 |
+| `NOW()` | `CURRENT_TIMESTAMP` | ANSI 标准语法 |
 
 ---
 
