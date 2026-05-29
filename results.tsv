@@ -1,3 +1,4 @@
 timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
 2026-05-29T00:00	baseline	sql-dialect-adapter	-	-	baseline	-	迁移后重新基线评估	-
 2026-05-29T00:00	baseline	sql-dialect-adapter	-	82.7	baseline	-	迁移后重新基线评估（dim8=8/10, full_test）	full_test
+2026-05-29T00:05	$(git rev-parse --short HEAD)	sql-dialect-adapter	82.7	83.9	keep	检查点设计	添加🔴CHECKPOINT/🛑STOP显性视觉标记	dry_run
