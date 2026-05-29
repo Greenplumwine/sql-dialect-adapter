@@ -149,7 +149,7 @@ SQL输入
   - 达梦8 也兼容 `LIMIT n OFFSET m`，但优先使用 `FETCH FIRST`
 - 金仓：`LIMIT n OFFSET m`（兼容MySQL）
 - 通用方案：`ROW_NUMBER() OVER` 窗口函数（所有版本/数据库通用）
-- **其他方向注意**：达梦→金仓分页可直接保留 `LIMIT`（金仓兼容）；金仓→达梦8+ 建议用 `FETCH FIRST`，达梦7- 需用 `ROW_NUMBER()`
+- **其他方向注意**：达梦→金仓分页可直接保留 `LIMIT`（金仓兼容）；金仓→达梦8+ 优先用 `FETCH FIRST`，达梦7- 需用 `ROW_NUMBER()`
 
 **模式E — 事务控制调整**：
 - MySQL：`START TRANSACTION`
@@ -180,11 +180,11 @@ SQL输入
 | 风险类型 | 示例 | 提示语 |
 |----------|------|--------|
 | 数据类型精度变化 | `DECIMAL(19,4)` → `NUMERIC` | ⚠️ 数据类型可能丢失精度，请确认是否继续 |
-| 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句（若原 SQL 无 ORDER BY，则无需提醒）<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串），建议加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>建议转换后测试验证 |
-| 分页性能差异 | `LIMIT OFFSET` → `ROWNUM` | ⚠️ 分页语法在目标数据库中的执行计划可能不同，建议关注性能 |
-| 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，建议添加转义符：[列表] |
+| 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句（若原 SQL 无 ORDER BY，则无需提醒）<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串）。**修复**：加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>必须测试验证 |
+| 分页性能差异 | `LIMIT OFFSET` → `ROWNUM` | ⚠️ 分页语法在目标数据库中的执行计划可能不同，注意性能变化 |
+| 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，已添加转义符：[列表] |
 
-### 验证建议
+### 验证清单
 - [ ] 在目标数据库中执行测试，对比执行计划
 - [ ] 检查数据类型兼容性
 - [ ] 验证函数返回结果一致性
@@ -212,7 +212,7 @@ SQL输入
 |--------|-------------|------|
 | `UNIX_TIMESTAMP(d)` | `EXTRACT(EPOCH FROM d)` | SQL:2016 标准，金仓原生支持；达梦需自定义函数 |
 | `FIND_IN_SET(str, strlist)` | `POSITION(',' \|\| str \|\| ',' IN ',' \|\| strlist \|\| ',')` | 通用字符串匹配逻辑，所有数据库支持 |
-| `GROUP_CONCAT(expr SEPARATOR sep)` | 无严格通用替代 | SQL:2016 引入 `LISTAGG`（Oracle/达梦）和 `STRING_AGG`（PostgreSQL/金仓），但两者互不兼容。建议：<br>- 若有明确目标数据库，使用该数据库的聚合函数<br>- 若无目标数据库，在应用层聚合 |
+| `GROUP_CONCAT(expr SEPARATOR sep)` | 无严格通用替代 | SQL:2016 引入 `LISTAGG`（Oracle/达梦）和 `STRING_AGG`（PostgreSQL/金仓），但两者互不兼容。替代方案：<br>- 若有明确目标数据库，使用该数据库的聚合函数<br>- 若无目标数据库，在应用层聚合 |
 | `DATE_FORMAT(d, '%Y-%m-%d')` | `TO_CHAR(d, 'YYYY-MM-DD')` | 非标准但广泛支持（达梦、金仓、Oracle 兼容） |
 | `IF(cond, v1, v2)` | `CASE WHEN cond THEN v1 ELSE v2 END` | ANSI 标准语法 |
 | `DATE_SUB(d, INTERVAL n DAY)` | `d - INTERVAL 'n' DAY` | SQL 标准 INTERVAL 语法，达梦/金仓/MySQL 均支持 |
@@ -226,12 +226,12 @@ SQL输入
 | 场景 | 触发条件 | 处理动作 |
 |------|----------|---------|
 | 检测失败 | `detect_database.py` 返回"未知" | 1. 询问用户手动指定<br>2. 用户也无法确定 → 按MySQL假设处理，标注⚠️<br>3. 涉及DDL时**暂停等待确认** |
-| 函数无映射 | 遇到未覆盖的函数 | 1. 保留原函数，标注⚠️<br>2. 提供官方文档搜索建议<br>3. 重复函数汇总列出 |
-| 验证失败 | 转换后SQL执行报错 | 1. 分析错误类型（保留字/参数/语法）<br>2. 尝试自动修复<br>3. 无法修复则标注位置+手动建议 |
+| 函数无映射 | 遇到未覆盖的函数 | 1. 保留原函数，标注⚠️<br>2. 提供官方文档搜索指引<br>3. 重复函数汇总列出 |
+| 验证失败 | 转换后SQL执行报错 | 1. 分析错误类型（保留字/参数/语法）<br>2. 尝试自动修复<br>3. 无法修复则标注位置+手动修复方案 |
 | 脚本不可用 | Python脚本执行失败 | 1. 检查环境（Python≥3.7）<br>2. 使用SKILL.md内置规则手动转换<br>3. 告知用户"自动脚本暂不可用" |
 | 空输入 | 用户未提供SQL或SQL为空字符串 | 1. 回复"请提供需要转换的SQL语句"<br>2. 若用户只提供了关键词（如"帮我转SQL"），提示"请粘贴具体的SQL代码" |
-| 超大SQL | SQL超过1000行或10万字符 | 1. 建议分段转换（按语句拆分）<br>2. 或提取核心片段（CREATE TABLE + 关键查询）<br>3. 标注⚠️"完整转换建议分批进行" |
-| 复杂嵌套 | 多层子查询（>3层）或CTE嵌套 | 1. 建议逐层转换（从最内层开始）<br>2. 或拆分为多个独立查询分别转换<br>3. 标注⚠️"嵌套层级较深，建议人工复核" |
+| 超大SQL | SQL超过1000行或10万字符 | 1. 分段转换（按语句拆分）<br>2. 或提取核心片段（CREATE TABLE + 关键查询）<br>3. 标注⚠️"完整转换需分批进行" |
+| 复杂嵌套 | 多层子查询（>3层）或CTE嵌套 | 1. 逐层转换（从最内层开始）<br>2. 或拆分为多个独立查询分别转换<br>3. 标注⚠️"嵌套层级较深，必须人工复核" |
 
 
 ---
