@@ -7,3 +7,4 @@ timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
 2026-05-29T00:20	$(git rev-parse --short HEAD)	sql-dialect-adapter	86.8	89.1	keep	实测表现	补充分页ORDER BY约束与保留字命名建议	dry_run
 2026-05-29T00:25	$(git rev-parse --short HEAD)	sql-dialect-adapter	73.4	78.0	keep	分级输出+意图处理	分级输出规则+优化直接执行+LISTAGG/分页修复	full_test
 2026-05-29T00:30	$(git rev-parse --short HEAD)	sql-dialect-adapter	78.0	80.3	keep	分级输出优化	优化/标准化意图固定中等级别+补充优化建议模板	dry_run
+2026-05-29T00:35	$(git rev-parse --short HEAD)	sql-dialect-adapter	80.3	81.5	keep	失败模式编码	补充转换步骤失败处理分支（模式A-E）	dry_run
