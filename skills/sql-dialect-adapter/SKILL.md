@@ -149,6 +149,7 @@ SQL输入
   - 达梦8 也兼容 `LIMIT n OFFSET m`，但优先使用 `FETCH FIRST`
 - 金仓：`LIMIT n OFFSET m`（兼容MySQL）
 - 通用方案：`ROW_NUMBER() OVER` 窗口函数（所有版本/数据库通用）
+- ⚠️ **使用 `FETCH FIRST` 时必须配合 `ORDER BY` 子句**，否则结果顺序不确定
 - **其他方向注意**：达梦→金仓分页可直接保留 `LIMIT`（金仓兼容）；金仓→达梦8+ 优先用 `FETCH FIRST`，达梦7- 需用 `ROW_NUMBER()`
 
 **模式E — 事务控制调整**：
@@ -182,7 +183,7 @@ SQL输入
 | 数据类型精度变化 | `DECIMAL(19,4)` → `NUMERIC` | ⚠️ 数据类型可能丢失精度，请确认是否继续 |
 | 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句（若原 SQL 无 ORDER BY，则无需提醒）<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串）。**修复**：加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>必须测试验证 |
 | 分页性能差异 | `LIMIT OFFSET` → `ROWNUM` | ⚠️ 分页语法在目标数据库中的执行计划可能不同，注意性能变化 |
-| 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，已添加转义符：[列表] |
+| 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，已添加转义符：[列表]<br>💡 **建议改用非保留字命名**（如 `orders` 替代 `order`），避免长期维护问题 |
 
 ### 验证清单
 - [ ] 在目标数据库中执行测试，对比执行计划
