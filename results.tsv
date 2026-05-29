@@ -1,10 +1,3 @@
 timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
-2026-05-26T00:00	baseline	sql-dialect-adapter	-	81.9	baseline	-	初始评估（6 prompts）	dry_run
-2026-05-26T00:10	xxxxxx	sql-dialect-adapter	81.9	82.9	keep	边界条件覆盖	补充空输入、超大SQL、复杂嵌套处理	dry_run
-2026-05-26T00:15	xxxxxx	sql-dialect-adapter	82.9	83.6	keep	检查点设计	强化检查点1约束（禁止直接转换）	dry_run
-2026-05-26T00:20	xxxxxx	sql-dialect-adapter	83.6	85.1	keep	工作流清晰度	重组Step 1/2为线性流程（检测合并到方向确认）	dry_run
-2026-05-26T00:25	xxxxxx	sql-dialect-adapter	85.1	86.5	keep	指令具体性	补充冷门方向关键差异提示（模式A-D）	dry_run
-2026-05-26T00:30	xxxxxx	sql-dialect-adapter	86.5	87.1	keep	实测表现	子agent实测验证（Prompt 1+5），with_skill显著优于baseline	full_test
-2026-05-26T00:35	xxxxxx	sql-dialect-adapter	87.1	87.9	keep	整体架构	合并检查点2到Step 3，精简结构层次	dry_run
-2026-05-26T00:40	xxxxxx	sql-dialect-adapter	87.9	88.6	keep	整体架构	删除冗余章节（注意事项合并到验证建议，资源索引精简为脚注）	dry_run
-2026-05-26T00:45	xxxxxx	sql-dialect-adapter	88.6	89.7	keep	实测表现	完整子agent实测（6 prompts），with_skill平均9.17 vs baseline平均5.17	full_test
+2026-05-29T00:00	baseline	sql-dialect-adapter	-	-	baseline	-	迁移后重新基线评估	-
+2026-05-29T00:00	baseline	sql-dialect-adapter	-	82.7	baseline	-	迁移后重新基线评估（dim8=8/10, full_test）	full_test
