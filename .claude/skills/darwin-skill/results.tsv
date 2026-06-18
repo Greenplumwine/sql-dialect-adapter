@@ -1,0 +1,5 @@
+timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
+2026-06-18T11:30	39072d9	sql-dialect-adapter	-	70.2	baseline	-	初始评估(纳入9类语义陷阱实测)	full_test
+2026-06-18T11:33	35e01a3	sql-dialect-adapter	70.2	79.6	keep	dim3+7+8	mysql-to-dm新增第9节严格模式与语义陷阱+第10节验证清单	dry_run
+2026-06-18T11:36	e2a1f42	sql-dialect-adapter	79.6	81.4	keep	dim9	黑名单补3条技术类反例	dry_run
+2026-06-18T11:37	f93aeca	sql-dialect-adapter	81.4	83.8	keep	dim4+8	CHECKPOINT2增严格模式语义变化+验证清单强化	dry_run
