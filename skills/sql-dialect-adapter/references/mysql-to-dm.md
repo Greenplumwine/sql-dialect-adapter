@@ -412,3 +412,151 @@ CREATE TABLE orders (
     updated_at DATE DEFAULT SYSDATE
 );
 ```
+
+## 9. 严格模式与语义陷阱（高频，必须人工复核）
+
+> 达梦遵循 SQL 标准，MySQL 默认 `sql_mode` 不含 `ONLY_FULL_GROUP_BY`。这一差异是 MySQL→达梦 迁移中**最高频的报错来源**，且部分问题只在运行时暴露（语法通过但结果错误），转换后必须用代表性数据实库验证。
+
+### 9.1 GROUP BY 严格模式
+
+**症状**：达梦报"不是 GROUP BY 表达式"。MySQL 不报错（对非分组列随机取值）。
+
+**根因**：达梦要求 SELECT 中所有非聚合列必须出现在 GROUP BY 中；MySQL 宽松模式允许 SELECT 列多于 GROUP BY。
+
+**修复方案（按是否有聚合函数选择）**：
+
+| 场景 | MySQL | 达梦修复 |
+|------|-------|---------|
+| 无聚合函数 + 按主键分组（纯去重） | `GROUP BY id` | 改 `SELECT DISTINCT`（见 9.2 判断是否合适） |
+| 有聚合函数 + SELECT 非聚合列不全 | `GROUP BY id` SELECT 多列 | 补全 GROUP BY 到所有非聚合列 |
+| 聚合函数内引用非分组列 | `LISTAGG(col)` 内引用未分组列 | 用 `MAX(col)` 包裹该列 |
+
+**案例**（`GbrmCommonMapper.batchDownload`）：有 `WM_CONCAT(po.gbrm0590c)` 聚合却无 GROUP BY → 加 `GROUP BY` 列出所有 17 个非聚合列。
+
+**案例**（`GbrmMeetingMapper.getDetail`）：`concat(..., TO_CHAR(motion.STARTDATE, ...))` 中 `motion.STARTDATE` 非聚合列没进 GROUP BY → 改 `MAX(motion.STARTDATE)`。
+
+### 9.2 ⚠️ GROUP BY 主键 ≠ DISTINCT（语义陷阱，最危险）
+
+**症状**：MySQL `GROUP BY 主键` 转 `SELECT DISTINCT` 后，**结果出现重复数据**。语法不报错，但行数翻倍。
+
+**根因**：两者语义不同：
+- `GROUP BY X` = 按 X 分组，每组一行（其他列随机取一行）
+- `SELECT DISTINCT` = 按**所有 SELECT 列**去重
+
+当 JOIN 展开后其他列（如 `duty.sid`、`sub.RECORDID`）不同时，DISTINCT 无法合并，保留多行。
+
+**判断规则**：
+- 若 MySQL 原意是"每个主键取一行代表"（GROUP BY 单列主键 + SELECT 多列）→ **不能直接换 DISTINCT**，要用 ROW_NUMBER
+- 若 MySQL 原意是"全列去重"→ 可以换 DISTINCT
+
+**正确修复（还原 GROUP BY X 语义）**：
+```sql
+-- MySQL
+SELECT duty.sid, gbrm06.RECORDID, sub.RECORDID AS RECORDID05, gbrm06.A0101
+FROM gbrm06
+LEFT JOIN gbrm05 sub ON sub.ID = gbrm06.NOTIFY
+LEFT JOIN gbrmdutyflow duty ON duty.RECORDID = sub.RECORDID
+WHERE duty.ISEND = 0
+GROUP BY gbrm06.RECORDID;
+
+-- 达梦（ROW_NUMBER 还原"每个 RECORDID 一行"语义）
+SELECT * FROM (
+  SELECT duty.sid, gbrm06.RECORDID, sub.RECORDID AS RECORDID05, gbrm06.A0101,
+         ROW_NUMBER() OVER (PARTITION BY gbrm06.RECORDID ORDER BY duty.sid) AS rn
+  FROM gbrm06
+  LEFT JOIN gbrm05 sub ON sub.ID = gbrm06.NOTIFY
+  LEFT JOIN gbrmdutyflow duty ON duty.RECORDID = sub.RECORDID
+  WHERE duty.ISEND = 0
+) t WHERE rn = 1;
+```
+
+比 MySQL 随机取一行更确定（按 `duty.sid` 排序取第一条），业务效果等价。
+
+**案例**：`loadMeetIdeaForTLJD`、`loadAppointAndDismissPeople`、`loadHistoryMeetIdea` 三个方法都因 DISTINCT 陷阱产生重复数据，改 ROW_NUMBER 后修复。
+
+### 9.3 HAVING 引用 SELECT 别名
+
+**症状**：达梦报"无效的列名"或"不是 GROUP BY 表达式"。MySQL 允许 HAVING 引用 SELECT 别名。
+
+**根因**：达梦（类 Oracle）HAVING 只接受原始表达式或 GROUP BY 列，不接受 SELECT 别名。
+
+**修复**：将 HAVING 中的别名替换为完整原始表达式；若该过滤不含聚合，上推为 WHERE 条件。
+
+**案例**（`getCurrentPositions`）：
+```sql
+-- MySQL（HAVING 引用别名 unitAndPosition）
+HAVING length(unitAndPosition) > 0
+
+-- 达梦（替换为原始表达式，且因不含聚合上推为 WHERE）
+WHERE length(concat(CASE WHEN ... END, CASE WHEN ... END)) > 0
+```
+
+### 9.4 DISTINCT 查询的 ORDER BY 约束
+
+**症状**：达梦报"ORDER BY 项不在 DISTINCT 查询项中"或分页包装后报"引用列未找到"。
+
+**根因**：达梦要求 `SELECT DISTINCT` 查询的 ORDER BY 项必须出现在 SELECT 项中；PageHelper 分页包装（`SELECT * FROM (SELECT TMP_PAGE.*, ROWNUM ... FROM (...) TMP_PAGE)`）后，带表前缀的 ORDER BY 列（如 `po.deletetime`）在外层扁平结果集中解析失败。
+
+**修复**：
+1. ORDER BY 用到的列加入 SELECT
+2. 分页场景 ORDER BY 用列别名（不带表前缀），如 `ORDER BY deletetime` 而非 `ORDER BY po.deletetime`
+
+### 9.5 相关子查询 + DISTINCT + ORDER BY 解析局限
+
+**症状**：达梦报"引用列未找到"或"无法解析的成员访问表达式"。单独去掉 ORDER BY 能跑，加上就报错。
+
+**根因**：达梦在 `SELECT DISTINCT` + 相关子查询（子查询引用外层表）+ `ORDER BY` 组合下，解析相关子查询时找不到外层列引用。
+
+**修复**：
+1. **标量子查询自包含**：子查询内引用自己的别名，不依赖外层表。如 `motion2.IDEA` 替代 `motion.IDEA`（`motion2` 是子查询内 JOIN 的别名，`motion` 是外层表）
+2. **子查询包装分层**：内层做 DISTINCT/ROW_NUMBER 去重，外层算标量子查询 + ORDER BY
+
+### 9.6 列别名引号
+
+**症状**：达梦报"语法分析出错"。MySQL 允许 `AS '姓名'`，达梦不允许。
+
+**根因**：达梦中单引号是字符串字面量，标识符（列别名）必须用双引号。
+
+**修复**：`AS '姓名'` → `AS "姓名"`；`AS 'gbrm1121a'` → `AS "gbrm1121a"`。
+
+> 注：表别名保留字（如 `list`）达梦连 `AS list` 也不支持，必须改非保留字名（如 `sub`）。SKILL.md 反例 #3 的"添加转义符"对表别名不适用，需改名。
+
+### 9.7 字符串与数字隐式转换
+
+**症状**：达梦报"字符串转换出错"。MySQL 隐式转换不报错。
+
+**根因**：达梦严格模式不允许字符串列与数字直接比较，或数字结果赋给字符串列。
+
+**修复**：
+- 字符串列比较用字符串字面量：`ZDYXB0104 = 1` → `ZDYXB0104 = '1'`
+- CASE 返回值类型匹配目标列：`CASE WHEN ... THEN 1 ELSE 0 END`（赋给 String 列）→ `THEN '1' ELSE '0'`
+- 转换前用 codegraph 核对 Java 实体字段类型（String/Integer），确保 SQL 字面量与字段类型匹配
+
+**案例**（`OmB01Mapper.findOrganizationList`）：`ZDYXB0104`（String 列）` = 1` 报错，且 `CASE THEN 1 ELSE 0` 赋给 String 类型的 ISB01 列报错，两处都改字符串字面量。
+
+### 9.8 死 JOIN 源头治理
+
+**症状**：MySQL 靠 `GROUP BY` 压制未被 SELECT 引用的 LEFT JOIN 产生的重复行；达梦严格模式下 GROUP BY 不能乱用（见 9.1/9.2），死 JOIN 的重复暴露出来。
+
+**根因**：SQL 里有未被 SELECT/WHERE 引用的 LEFT JOIN，MySQL 宽松模式下靠 GROUP BY 事后压制，达梦下 GROUP BY 语义变化导致重复。
+
+**修复**：删除未被引用的死 JOIN（从源头消除重复），而非靠 GROUP BY/DISTINCT 事后压制。
+
+**判断规则**：检查每个 JOIN 的表是否在 SELECT/WHERE/ORDER BY 中被引用，未引用的考虑删除。若 JOIN 仅用于过滤条件（如动态 `<if>`），保留但配合 9.2 的 ROW_NUMBER 去重。
+
+**案例**（`loadMeetIdeaForTLJD`）：第二个 `gbrm_flowstepzb11` JOIN 未被 SELECT 引用（SELECT 用的是第一个 JOIN 的 `flowstep` 别名），删除该死 JOIN 消除重复源头。
+
+---
+
+## 10. 迁移后验证清单（必做）
+
+转换后语法通过≠结果正确，以下问题只在运行时暴露，必须用代表性数据在达梦实库验证：
+
+- [ ] **行数对比**：转换前后结果行数一致（DISTINCT 陷阱会导致行数翻倍）
+- [ ] **GROUP BY 合规**：SELECT 非聚合列全在 GROUP BY 中
+- [ ] **HAVING/ORDER BY 别名**：未引用 SELECT 别名（达梦不允许）
+- [ ] **DISTINCT 的 ORDER BY**：ORDER BY 列在 SELECT 中
+- [ ] **类型匹配**：字符串列比较用字符串字面量，CASE 返回值类型匹配目标列
+- [ ] **死 JOIN 排查**：未被引用的 JOIN 是否产生重复
+- [ ] **别名引号**：列别名用双引号，表别名避开保留字
+```
