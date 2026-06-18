@@ -28,5 +28,20 @@
     "id": 6,
     "prompt": "帮我把这段 MySQL 的复杂查询转成达梦的，注意有个 group 字段可能是保留字：\n```sql\nSELECT \n  o.group,\n  GROUP_CONCAT(DISTINCT u.name ORDER BY u.score DESC SEPARATOR ' | ') AS ranked_users,\n  SUM(o.amount) AS total,\n  IFNULL(AVG(o.amount), 0) AS avg_amount\nFROM `order` o\nJOIN users u ON o.user_id = u.id\nWHERE o.created_at BETWEEN DATE_SUB(NOW(), INTERVAL 1 MONTH) AND NOW()\nGROUP BY o.group\nHAVING total > 10000\nLIMIT 50;\n```",
     "expected": "触发检查点2（高风险）：group保留字冲突、GROUP_CONCAT(DISTINCT+ORDER BY)行为差异、反引号→双引号、IFNULL→NVL、DATE_SUB/NOW→标准日期语法、LIMIT→FETCH FIRST"
+  },
+  {
+    "id": 7,
+    "prompt": "帮我把这段 MySQL 查询转成达梦的：\n```sql\nSELECT duty.sid,\n       gbrm06.RECORDID,\n       gbrm06.A0101,\n       flowstep.FLOWTYPENAME,\n       duty.idea\nFROM gbrm06\nLEFT JOIN gbrm_flowstepzb11 flowstep ON flowstep.FLOWTYPEID = gbrm06.FLOWTYPEID\nLEFT JOIN gbrmdutyflow duty ON duty.RECORDID = gbrm06.NOTIFY\nWHERE duty.DELETEFLAG = 0\nGROUP BY gbrm06.RECORDID\nORDER BY gbrm06.GBRM0611 DESC;\n```",
+    "expected": "识别 GROUP BY 严格模式问题：SELECT 多个非聚合列但 GROUP BY 只有 RECORDID，达梦会报「不是 GROUP BY 表达式」。必须提示该问题并给出修复方案（补全 GROUP BY 或按语义用 ROW_NUMBER/DISTINCT），不能只做机械函数替换"
+  },
+  {
+    "id": 8,
+    "prompt": "这段 MySQL 用 GROUP BY 主键去重，转达梦后报「不是 GROUP BY 表达式」，我直接改成 SELECT DISTINCT 可以吗？\n```sql\nSELECT duty.sid, gbrm06.RECORDID, sub.RECORDID AS RECORDID05, gbrm06.A0101\nFROM gbrm06\nLEFT JOIN gbrm05 sub ON sub.ID = gbrm06.NOTIFY\nLEFT JOIN gbrmdutyflow duty ON duty.RECORDID = sub.RECORDID\nWHERE duty.ISEND = 0\nGROUP BY gbrm06.RECORDID;\n```",
+    "expected": "⚠️ 核心陷阱：必须明确指出 GROUP BY 主键≠DISTINCT。MySQL GROUP BY X = 每组一行（其他列随机取），DISTINCT = 全列去重。JOIN 展开后 duty.sid/sub.RECORDID05 不同，DISTINCT 会保留多行导致重复数据。正确方案：ROW_NUMBER() OVER (PARTITION BY gbrm06.RECORDID ORDER BY duty.sid) WHERE rn=1。不能简单回答「可以改 DISTINCT」"
+  },
+  {
+    "id": 9,
+    "prompt": "帮我把这段 MySQL 转成达梦，HAVING 里引用了 SELECT 的别名：\n```sql\nSELECT a02.RECORDID,\n       concat(department.B0101, position.ZWGL0101) AS unitAndPosition\nFROM a02\nLEFT JOIN b01 department ON department.B00 = a02.A0201B\nWHERE a02.A0255 != '0'\nGROUP BY a02.RECORDID\nHAVING length(unitAndPosition) > 0;\n```",
+    "expected": "识别 HAVING 引用 SELECT 别名问题：达梦（类Oracle）不允许 HAVING 引用列别名，只接受原始表达式或 GROUP BY 列。必须提示并将 HAVING 中的别名 unitAndPosition 替换为完整原始表达式 concat(department.B0101, position.ZWGL0101)，或上推为 WHERE 条件（若不含聚合）"
   }
 ]
