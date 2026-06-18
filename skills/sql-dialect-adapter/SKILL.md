@@ -275,3 +275,6 @@ SQL输入
 | 6 | 保留源数据库专有声明 | 如保留 `ENGINE=InnoDB`、`CHARSET=utf8mb4` 等，目标数据库不支持会报错 | 模式C中必须移除源数据库专有声明 |
 | 7 | 分页语法不区分版本 | 达梦7- 不支持 `FETCH FIRST`，直接转换会导致语法错误 | 根据目标数据库版本选择正确分页语法 |
 | 8 | 跳过检查点2直接输出 | 高风险项（精度丢失、行为差异）未提示用户 | 输出前必须执行 🔴 CHECKPOINT 2 |
+| 9 | **`GROUP BY 主键` 直接换成 `SELECT DISTINCT`** | 语义不同！GROUP BY X=每组一行（其他列随机取），DISTINCT=全列去重。JOIN 展开后其他列不同，DISTINCT 保留多行→**重复数据**（语法不报错，行数翻倍） | 还原"每个主键一行"语义用 `ROW_NUMBER() OVER (PARTITION BY X ORDER BY ...) WHERE rn=1`。详见 mysql-to-dm.md 9.2 |
+| 10 | **HAVING/ORDER BY 引用 SELECT 别名未处理** | 达梦（类Oracle）不允许 HAVING/ORDER BY 引用列别名，报"无效的列名/不是GROUP BY表达式" | 别名替换为完整原始表达式；无聚合的 HAVING 上推为 WHERE。详见 mysql-to-dm.md 9.3/9.4 |
+| 11 | **字符串列与数字直接比较/数字赋给字符串列** | 达梦严格模式不隐式转换，报"字符串转换出错"。MySQL 隐式转换不报错 | 字符串列比较用字符串字面量（`= '1'`）；CASE 返回值类型匹配目标列；转换前用 codegraph 核对 Java 实体字段类型。详见 mysql-to-dm.md 9.7 |
