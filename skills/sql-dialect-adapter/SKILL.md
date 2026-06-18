@@ -207,6 +207,7 @@ SQL输入
 | 函数行为差异 | `GROUP_CONCAT` → `LISTAGG`（排序、NULL处理、去重行为不同） | ⚠️ `GROUP_CONCAT` 与 `LISTAGG`/`WM_CONCAT` 行为差异：<br>1. **排序**：`GROUP_CONCAT(ORDER BY ...)` → `LISTAGG(...) WITHIN GROUP (ORDER BY ...)`，需显式迁移排序子句。**注意**：即使原 SQL 无 `ORDER BY`，达梦 `LISTAGG` 语法仍需 `WITHIN GROUP` 子句（可用 `ORDER BY NULL`）<br>2. **NULL处理**：MySQL `GROUP_CONCAT` 默认跳过NULL，达梦 `LISTAGG` 默认保留NULL（结果含空字符串）。**修复**：加 `FILTER (WHERE expr IS NOT NULL)`<br>3. **去重**：MySQL `GROUP_CONCAT(DISTINCT ...)` 达梦无直接支持，需先用子查询去重<br>必须测试验证 |
 | 分页性能差异 | `LIMIT OFFSET` → `ROWNUM` | ⚠️ 分页语法在目标数据库中的执行计划可能不同，注意性能变化 |
 | 保留字冲突 | 表名/列名与目标数据库保留字冲突 | ⚠️ 以下标识符与目标数据库保留字冲突，已添加转义符：[列表]<br>💡 **优先改用非保留字命名**（如 `orders` 替代 `order`），避免长期维护问题 |
+| **严格模式语义变化** | `GROUP BY 主键`→`DISTINCT`（重复数据）/ HAVING 引用别名 / 字符串列与数字比较 | ⚠️ 达梦严格模式，原 MySQL 宽松语义需重新表达。**语法通过≠结果正确**，重复数据/类型转换问题只在运行时暴露。详见 mysql-to-dm.md 第9节，必须用代表性数据实库验证行数和内容 |
 
 ### 【复杂级别】验证清单
 - [ ] 在目标数据库中执行测试，对比执行计划
@@ -214,6 +215,10 @@ SQL输入
 - [ ] 验证函数返回结果一致性
 - [ ] 评估性能影响（通用转换可能改变执行计划）
 - [ ] 注意版本兼容性（不同数据库版本语法有差异）
+- [ ] **行数对比**：转换前后结果行数一致（DISTINCT 陷阱会导致行数翻倍，语法不报错）
+- [ ] **GROUP BY 合规**：SELECT 非聚合列全在 GROUP BY 中（达梦报"不是 GROUP BY 表达式"）
+- [ ] **HAVING/ORDER BY 别名**：未引用 SELECT 别名（达梦不允许）
+- [ ] **类型匹配**：字符串列比较用字符串字面量，CASE 返回值类型匹配目标列
 ```
 
 ---
@@ -275,3 +280,6 @@ SQL输入
 | 6 | 保留源数据库专有声明 | 如保留 `ENGINE=InnoDB`、`CHARSET=utf8mb4` 等，目标数据库不支持会报错 | 模式C中必须移除源数据库专有声明 |
 | 7 | 分页语法不区分版本 | 达梦7- 不支持 `FETCH FIRST`，直接转换会导致语法错误 | 根据目标数据库版本选择正确分页语法 |
 | 8 | 跳过检查点2直接输出 | 高风险项（精度丢失、行为差异）未提示用户 | 输出前必须执行 🔴 CHECKPOINT 2 |
+| 9 | **`GROUP BY 主键` 直接换成 `SELECT DISTINCT`** | 语义不同！GROUP BY X=每组一行（其他列随机取），DISTINCT=全列去重。JOIN 展开后其他列不同，DISTINCT 保留多行→**重复数据**（语法不报错，行数翻倍） | 还原"每个主键一行"语义用 `ROW_NUMBER() OVER (PARTITION BY X ORDER BY ...) WHERE rn=1`。详见 mysql-to-dm.md 9.2 |
+| 10 | **HAVING/ORDER BY 引用 SELECT 别名未处理** | 达梦（类Oracle）不允许 HAVING/ORDER BY 引用列别名，报"无效的列名/不是GROUP BY表达式" | 别名替换为完整原始表达式；无聚合的 HAVING 上推为 WHERE。详见 mysql-to-dm.md 9.3/9.4 |
+| 11 | **字符串列与数字直接比较/数字赋给字符串列** | 达梦严格模式不隐式转换，报"字符串转换出错"。MySQL 隐式转换不报错 | 字符串列比较用字符串字面量（`= '1'`）；CASE 返回值类型匹配目标列；转换前用 codegraph 核对 Java 实体字段类型。详见 mysql-to-dm.md 9.7 |
